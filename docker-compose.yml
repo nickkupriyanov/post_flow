@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-postflow}
+      POSTGRES_USER: ${POSTGRES_USER:-postflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postflow}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postflow_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postflow} -d ${POSTGRES_DB:-postflow}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./apps/backend
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postflow:postflow@db:5432/postflow}
+      JWT_SECRET: ${JWT_SECRET:-local-development-change-me}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build: ./apps/frontend
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  postflow_db:
