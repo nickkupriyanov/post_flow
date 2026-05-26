@@ -1,10 +1,12 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { z } from "zod";
 
 import { api } from "../api";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Field } from "../components/ProjectForm";
 import { EmptyState, ErrorState, LoadingState } from "../components/States";
 import { Idea, Platform, Post, PostStatus } from "../types";
@@ -80,6 +82,7 @@ function PostEditorForm({
   projectId: string; postId?: string; ideas: Idea[]; existing?: Post & { body: string; cta: string; idea_id: number };
   suggestedIdea: string | null; navigateBack: () => void; queryClient: ReturnType<typeof useQueryClient>;
 }) {
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const { register, handleSubmit, formState: { errors } } = useForm<PostValues>({
     resolver: zodResolver(postSchema),
     values: existing ? {
@@ -112,6 +115,14 @@ function PostEditorForm({
       navigateBack();
     }
   });
+  const remove = useMutation({
+    mutationFn: () => api<void>(`/projects/${projectId}/posts/${postId}`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["posts", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard", projectId] });
+      navigateBack();
+    }
+  });
   return (
     <section className="editor-page">
       <div><p className="eyebrow">Редактор</p><h1 className="page-title">{postId ? "Редактировать пост" : "Новый пост"}</h1></div>
@@ -134,9 +145,21 @@ function PostEditorForm({
         <Field label="Текст" error={errors.body?.message}><textarea className="body-input" rows={10} {...register("body")} /></Field>
         <Field label="CTA" error={errors.cta?.message}><input {...register("cta")} /></Field>
         {mutation.isError && <p className="form-error">Пост не удалось сохранить.</p>}
-        <div className="editor-actions"><button className="primary-button" type="submit">Сохранить пост</button><button className="secondary-button" onClick={navigateBack} type="button">Отмена</button></div>
+        <div className="editor-actions">
+          <button className="primary-button" type="submit" disabled={mutation.isPending}>Сохранить пост</button>
+          <button className="secondary-button" onClick={navigateBack} type="button" disabled={mutation.isPending}>Отмена</button>
+          {postId ? <button className="danger-button inline-danger" onClick={() => { remove.reset(); setDeleteOpen(true); }} type="button">Удалить пост</button> : null}
+        </div>
       </form>
+      <ConfirmDialog
+        open={deleteOpen}
+        title="Удалить пост?"
+        description="Пост будет удален без возможности восстановления."
+        pending={remove.isPending}
+        error={remove.isError ? "Не удалось удалить пост." : undefined}
+        onCancel={() => { if (!remove.isPending) setDeleteOpen(false); }}
+        onConfirm={() => remove.mutate()}
+      />
     </section>
   );
 }
-

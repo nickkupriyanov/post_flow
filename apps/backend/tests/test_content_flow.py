@@ -241,3 +241,24 @@ def test_deleting_pillar_keeps_its_existing_idea(client, auth_headers):
     ).json()
     assert remaining["title"] == "Keep this idea"
     assert remaining["pillar_id"] is None
+
+
+def test_deleting_idea_removes_its_existing_posts(client, auth_headers):
+    project = create_project(client, auth_headers)
+    idea = client.post(
+        f"/projects/{project['id']}/ideas",
+        json={"title": "Disposable idea", "notes": ""},
+        headers=auth_headers,
+    ).json()
+    client.post(
+        f"/projects/{project['id']}/posts",
+        json={"idea_id": idea["id"], "platform": "telegram", "title": "Attached post", "body": "Text", "cta": "", "status": "draft"},
+        headers=auth_headers,
+    )
+
+    assert client.delete(
+        f"/projects/{project['id']}/ideas/{idea['id']}", headers=auth_headers
+    ).status_code == 204
+    assert client.get(
+        f"/projects/{project['id']}/posts", headers=auth_headers
+    ).json() == []

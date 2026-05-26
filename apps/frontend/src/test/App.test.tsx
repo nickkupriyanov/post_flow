@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { vi } from "vitest";
@@ -124,4 +124,135 @@ test("post editor requires a date before scheduling and saves a platform post", 
     expect.stringContaining("/projects/1/posts"),
     expect.objectContaining({ method: "POST" })
   ));
+});
+
+test("ideas can be created and then edited from the side form", async () => {
+  localStorage.setItem("postflow_token", "valid-token");
+  let ideas: Array<{ id: number; title: string; notes: string; pillar_id: null }> = [];
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const path = String(input);
+    if (path.endsWith("/auth/me")) return jsonResponse({ id: 1, email: "me@example.com" });
+    if (path.endsWith("/projects/1")) return jsonResponse(project);
+    if (path.endsWith("/projects/1/pillars")) return jsonResponse([]);
+    if (path.endsWith("/projects/1/ideas") && init?.method === "POST") {
+      ideas = [{ id: 2, title: "Evening ritual", notes: "First note", pillar_id: null }];
+      return jsonResponse(ideas[0], 201);
+    }
+    if (path.endsWith("/projects/1/ideas/2") && init?.method === "PUT") {
+      ideas = [{ id: 2, title: "Evening reset", notes: "First note", pillar_id: null }];
+      return jsonResponse(ideas[0]);
+    }
+    if (path.endsWith("/projects/1/ideas")) return jsonResponse(ideas);
+    return jsonResponse([]);
+  });
+  renderRoute("/projects/1/ideas");
+
+  await userEvent.type(await screen.findByLabelText(/название идеи/i), "Evening ritual");
+  await userEvent.type(screen.getByLabelText(/заметки/i), "First note");
+  await userEvent.click(screen.getByRole("button", { name: /сохранить идею/i }));
+  expect(await screen.findByText("Evening ritual")).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: /редактировать идею/i }));
+  expect(screen.getByRole("heading", { name: /редактировать идею/i })).toBeInTheDocument();
+  await userEvent.clear(screen.getByLabelText(/название идеи/i));
+  await userEvent.type(screen.getByLabelText(/название идеи/i), "Evening reset");
+  await userEvent.click(screen.getByRole("button", { name: /сохранить изменения/i }));
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+    expect.stringContaining("/projects/1/ideas/2"),
+    expect.objectContaining({ method: "PUT" })
+  ));
+});
+
+test("idea deletion requires confirmation and displays a failed deletion", async () => {
+  localStorage.setItem("postflow_token", "valid-token");
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const path = String(input);
+    if (path.endsWith("/auth/me")) return jsonResponse({ id: 1, email: "me@example.com" });
+    if (path.endsWith("/projects/1")) return jsonResponse(project);
+    if (path.endsWith("/projects/1/pillars")) return jsonResponse([]);
+    if (path.endsWith("/projects/1/ideas/2") && init?.method === "DELETE") return jsonResponse({ detail: "Delete failed" }, 500);
+    if (path.endsWith("/projects/1/ideas")) return jsonResponse([{ id: 2, title: "Evening ritual", notes: "", pillar_id: null }]);
+    return jsonResponse([]);
+  });
+  renderRoute("/projects/1/ideas");
+
+  await userEvent.click(await screen.findByRole("button", { name: /удалить идею/i }));
+  let dialog = screen.getByRole("alertdialog");
+  expect(within(dialog).getByText(/связанные посты/i)).toBeInTheDocument();
+  await userEvent.click(within(dialog).getByRole("button", { name: /отмена/i }));
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("/ideas/2"), expect.objectContaining({ method: "DELETE" }));
+
+  await userEvent.click(screen.getByRole("button", { name: /удалить идею/i }));
+  dialog = screen.getByRole("alertdialog");
+  await userEvent.click(within(dialog).getByRole("button", { name: /^удалить$/i }));
+  expect(await within(dialog).findByText(/не удалось удалить идею/i)).toBeInTheDocument();
+});
+
+test("pillars can be edited from the existing side form", async () => {
+  localStorage.setItem("postflow_token", "valid-token");
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const path = String(input);
+    if (path.endsWith("/auth/me")) return jsonResponse({ id: 1, email: "me@example.com" });
+    if (path.endsWith("/projects/1")) return jsonResponse(project);
+    if (path.endsWith("/projects/1/pillars/4") && init?.method === "PUT") return jsonResponse({ id: 4, name: "Rituals", description: "Updated" });
+    if (path.endsWith("/projects/1/pillars")) return jsonResponse([{ id: 4, name: "Practice", description: "Original" }]);
+    return jsonResponse([]);
+  });
+  renderRoute("/projects/1/pillars");
+
+  await userEvent.click(await screen.findByRole("button", { name: /редактировать рубрику/i }));
+  expect(screen.getByRole("heading", { name: /редактировать рубрику/i })).toBeInTheDocument();
+  await userEvent.clear(screen.getByLabelText(/^название$/i));
+  await userEvent.type(screen.getByLabelText(/^название$/i), "Rituals");
+  await userEvent.click(screen.getByRole("button", { name: /сохранить изменения/i }));
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+    expect.stringContaining("/projects/1/pillars/4"),
+    expect.objectContaining({ method: "PUT" })
+  ));
+});
+
+test("an existing post can be deleted from its editor after confirmation", async () => {
+  localStorage.setItem("postflow_token", "valid-token");
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const path = String(input);
+    if (path.endsWith("/auth/me")) return jsonResponse({ id: 1, email: "me@example.com" });
+    if (path.endsWith("/projects/1")) return jsonResponse(project);
+    if (path.endsWith("/projects/1/ideas")) return jsonResponse([{ id: 2, title: "Evening ritual", notes: "" }]);
+    if (path.endsWith("/projects/1/posts/8") && init?.method === "DELETE") return Promise.resolve(new Response(null, { status: 204 }));
+    if (path.endsWith("/projects/1/posts/8")) return jsonResponse({ id: 8, idea_id: 2, platform: "telegram", title: "Old post", body: "Text", cta: "", status: "draft", scheduled_at: null });
+    if (path.endsWith("/projects/1/posts")) return jsonResponse([]);
+    return jsonResponse([]);
+  });
+  renderRoute("/projects/1/posts/8");
+
+  await userEvent.click(await screen.findByRole("button", { name: /удалить пост/i }));
+  const dialog = screen.getByRole("alertdialog");
+  await userEvent.click(within(dialog).getByRole("button", { name: /^удалить$/i }));
+
+  expect(await screen.findByRole("heading", { name: /^посты$/i })).toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/projects/1/posts/8"), expect.objectContaining({ method: "DELETE" }));
+});
+
+test("project deletion is confirmed and returns to the project library", async () => {
+  localStorage.setItem("postflow_token", "valid-token");
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const path = String(input);
+    if (path.endsWith("/auth/me")) return jsonResponse({ id: 1, email: "me@example.com" });
+    if (path.endsWith("/projects/1") && init?.method === "DELETE") return Promise.resolve(new Response(null, { status: 204 }));
+    if (path.endsWith("/projects/1")) return jsonResponse(project);
+    if (path.endsWith("/projects")) return jsonResponse([]);
+    return jsonResponse([]);
+  });
+  renderRoute("/projects/1/settings");
+
+  await userEvent.click(await screen.findByRole("button", { name: /удалить проект/i }));
+  const dialog = screen.getByRole("alertdialog");
+  expect(within(dialog).getByText(/весь его контент/i)).toBeInTheDocument();
+  await userEvent.click(within(dialog).getByRole("button", { name: /^удалить$/i }));
+
+  expect(await screen.findByText(/пока нет проектов/i)).toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/projects/1"), expect.objectContaining({ method: "DELETE" }));
 });

@@ -29,12 +29,13 @@ h1, h2, h3, p { margin: 0; }
 .brand.large { font-size: 2.45rem; }
 .eyebrow { color: var(--coral-dark); font-size: .72rem; font-weight: 700; letter-spacing: .18em; margin-bottom: .8rem; text-transform: uppercase; }
 .page-title { font: 550 clamp(2.2rem, 4vw, 3rem) "Fraunces", serif; letter-spacing: -.06em; margin-bottom: 1.7rem; }
-.primary-button, .light-button, .secondary-button { border: 0; border-radius: 999px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; transition: transform .18s ease, box-shadow .18s ease; }
+.primary-button, .light-button, .secondary-button, .confirm-delete-button { border: 0; border-radius: 999px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; transition: transform .18s ease, box-shadow .18s ease; }
 .primary-button { background: var(--coral); color: #fff; padding: .9rem 1.4rem; }
 .primary-button:hover, .light-button:hover { transform: translateY(-1px); box-shadow: 0 12px 28px rgba(194, 60, 50, .2); }
-.primary-button:disabled { opacity: .62; cursor: wait; }
+.primary-button:disabled, .secondary-button:disabled, .confirm-delete-button:disabled { opacity: .62; cursor: wait; }
 .light-button { background: var(--paper); color: var(--coral-dark); padding: .85rem 1.25rem; }
 .secondary-button { background: transparent; border: 1px solid var(--line); padding: .9rem 1.3rem; color: var(--muted); }
+.confirm-delete-button { background: var(--coral-dark); color: #fff; padding: .9rem 1.35rem; }
 .link-button { text-decoration: none; }
 .field { display: grid; gap: .48rem; margin-bottom: 1.05rem; color: #514844; font-size: .86rem; font-weight: 600; }
 .field input, .field textarea, .field select, .filters select {
@@ -122,8 +123,10 @@ h1, h2, h3, p { margin: 0; }
 .idea-card h3, .pillar-card h3 { font-size: 1rem; margin-bottom: .45rem; }
 .idea-card p, .pillar-card p { color: var(--muted); font-size: .85rem; margin-bottom: .9rem; }
 .text-action { color: var(--coral-dark); font-size: .78rem; font-weight: 700; }
+.card-actions { align-items: center; display: flex; gap: .9rem; }
 .side-form { align-self: start; }
 .side-form h2 { font: 550 1.55rem "Fraunces", serif; margin-bottom: 1.4rem; }
+.form-actions { display: flex; gap: .65rem; }
 .page-header { align-items: start; display: flex; justify-content: space-between; }
 .filters { display: flex; gap: .75rem; margin-bottom: 1.4rem; }
 .filters select { color: var(--muted); font-size: .85rem; }
@@ -140,8 +143,15 @@ h1, h2, h3, p { margin: 0; }
 .editor-actions { display: flex; gap: .8rem; margin-top: 1.4rem; }
 .pillar-card { align-items: start; display: flex; justify-content: space-between; margin-bottom: .7rem; }
 .quiet-button { background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: .72rem; }
+.danger-text { color: #a84139; }
 .settings-page { max-width: 760px; }
 .danger-button { background: transparent; border: 0; color: #a84139; cursor: pointer; font-size: .84rem; margin-top: 1.4rem; }
+.inline-danger { margin-left: auto; margin-top: 0; padding: .9rem .25rem; }
+.dialog-backdrop { align-items: center; background: rgba(41,35,35,.35); display: flex; inset: 0; justify-content: center; padding: 1.2rem; position: fixed; z-index: 20; }
+.confirm-dialog { background: var(--paper); border: 1px solid var(--line); border-radius: 24px; box-shadow: 0 24px 68px rgba(41,35,35,.18); max-width: 430px; padding: 1.8rem; width: 100%; }
+.confirm-dialog h2 { font: 550 1.7rem "Fraunces", serif; letter-spacing: -.04em; margin-bottom: .8rem; }
+.dialog-description { color: var(--muted); font-size: .92rem; line-height: 1.6; margin-bottom: 1.35rem; }
+.dialog-actions { display: flex; gap: .7rem; justify-content: flex-end; }
 @media (max-width: 860px) {
   .auth-shell, .onboarding-grid, .split-page, .dashboard-columns { grid-template-columns: 1fr; }
   .auth-story { min-height: 44vh; }
