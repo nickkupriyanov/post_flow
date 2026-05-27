@@ -45,9 +45,14 @@ export interface Post {
   scheduled_at: string | null;
 }
 
+export interface GeneratedPostDraft {
+  title: string;
+  body: string;
+  cta: string;
+}
+
 export interface Dashboard {
   scheduled_posts: Post[];
   draft_posts: Post[];
   ideas_without_posts: Idea[];
 }
-

@@ -1,5 +1,8 @@
 from datetime import datetime, timezone
 
+import httpx
+import pytest
+
 from conftest import register_and_login
 
 
@@ -65,6 +68,145 @@ def test_project_pillar_idea_and_multiple_platform_posts_flow(client, auth_heade
     assert telegram.status_code == 201
     assert instagram.status_code == 201
     assert len(client.get(f"/projects/{project['id']}/posts", headers=auth_headers).json()) == 2
+
+
+def test_ai_generation_returns_editable_draft_without_saving_post(client, auth_headers, monkeypatch):
+    project = create_project(client, auth_headers)
+    pillar = client.post(
+        f"/projects/{project['id']}/pillars",
+        json={"name": "Practice", "description": "Expert routines"},
+        headers=auth_headers,
+    ).json()
+    idea = client.post(
+        f"/projects/{project['id']}/ideas",
+        json={"title": "Evening reset", "notes": "Three slow steps", "pillar_id": pillar["id"]},
+        headers=auth_headers,
+    ).json()
+    monkeypatch.setattr("app.main.settings.timeweb_ai_token", "secret-token")
+    monkeypatch.setattr("app.main.settings.timeweb_ai_agent_id", "content-agent")
+    request = {}
+
+    class AgentResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "choices": [{
+                    "message": {"content": '{"title":"Slow evening","body":"Take a pause.","cta":"Save it."}'},
+                    "finish_reason": "stop",
+                }]
+            }
+
+    def fake_post(url, **kwargs):
+        request["url"] = url
+        request.update(kwargs)
+        return AgentResponse()
+
+    monkeypatch.setattr("app.main.httpx.post", fake_post)
+    response = client.post(
+        f"/projects/{project['id']}/posts/generate",
+        json={"idea_id": idea["id"], "platform": "instagram"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"title": "Slow evening", "body": "Take a pause.", "cta": "Save it."}
+    assert client.get(f"/projects/{project['id']}/posts", headers=auth_headers).json() == []
+    assert request["url"].endswith("/agents/content-agent/v1/chat/completions")
+    assert request["headers"]["Authorization"] == "Bearer secret-token"
+    prompt = request["json"]["messages"][0]["content"]
+    assert "Calm bodywork studio" in prompt
+    assert "Evening reset" in prompt
+    assert "Practice: Expert routines" in prompt
+    assert "Площадка: instagram" in prompt
+    assert request["json"]["messages"][0]["role"] == "user"
+    assert request["json"]["stream"] is False
+
+
+def test_ai_generation_requires_configuration_and_owned_idea(client, auth_headers):
+    project = create_project(client, auth_headers)
+    idea = client.post(
+        f"/projects/{project['id']}/ideas",
+        json={"title": "Known idea", "notes": ""},
+        headers=auth_headers,
+    ).json()
+    assert client.post(
+        f"/projects/{project['id']}/posts/generate",
+        json={"idea_id": idea["id"], "platform": "telegram"},
+        headers=auth_headers,
+    ).status_code == 503
+
+    other_project = create_project(client, auth_headers, "Other project")
+    other_idea = client.post(
+        f"/projects/{other_project['id']}/ideas",
+        json={"title": "Wrong project idea", "notes": ""},
+        headers=auth_headers,
+    ).json()
+    assert client.post(
+        f"/projects/{project['id']}/posts/generate",
+        json={"idea_id": other_idea["id"], "platform": "telegram"},
+        headers=auth_headers,
+    ).status_code == 422
+
+    stranger_headers = register_and_login(client, "generator-stranger@example.com")
+    assert client.post(
+        f"/projects/{project['id']}/posts/generate",
+        json={"idea_id": idea["id"], "platform": "telegram"},
+        headers=stranger_headers,
+    ).status_code == 404
+
+
+@pytest.mark.parametrize("agent_result", [
+    {"choices": [{"message": {"content": "not-json"}, "finish_reason": "stop"}]},
+    {"choices": [{"message": {"content": '{"title":"Partial"}'}, "finish_reason": "stop"}]},
+    {"choices": [{"message": {"content": '{"title":"Title","body":"Body","cta":""}'}, "finish_reason": "length"}]},
+])
+def test_ai_generation_rejects_invalid_or_incomplete_agent_results(client, auth_headers, monkeypatch, agent_result):
+    project = create_project(client, auth_headers)
+    idea = client.post(
+        f"/projects/{project['id']}/ideas",
+        json={"title": "Prompt", "notes": ""},
+        headers=auth_headers,
+    ).json()
+    monkeypatch.setattr("app.main.settings.timeweb_ai_token", "secret-token")
+    monkeypatch.setattr("app.main.settings.timeweb_ai_agent_id", "content-agent")
+
+    class AgentResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return agent_result
+
+    monkeypatch.setattr("app.main.httpx.post", lambda *args, **kwargs: AgentResponse())
+    response = client.post(
+        f"/projects/{project['id']}/posts/generate",
+        json={"idea_id": idea["id"], "platform": "telegram"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 502
+
+
+def test_ai_generation_maps_provider_http_error_to_bad_gateway(client, auth_headers, monkeypatch):
+    project = create_project(client, auth_headers)
+    idea = client.post(
+        f"/projects/{project['id']}/ideas",
+        json={"title": "Prompt", "notes": ""},
+        headers=auth_headers,
+    ).json()
+    monkeypatch.setattr("app.main.settings.timeweb_ai_token", "secret-token")
+    monkeypatch.setattr("app.main.settings.timeweb_ai_agent_id", "content-agent")
+
+    def failed_call(*args, **kwargs):
+        raise httpx.ConnectError("Provider unavailable")
+
+    monkeypatch.setattr("app.main.httpx.post", failed_call)
+    assert client.post(
+        f"/projects/{project['id']}/posts/generate",
+        json={"idea_id": idea["id"], "platform": "telegram"},
+        headers=auth_headers,
+    ).status_code == 502
 
 
 def test_scheduled_and_published_posts_require_scheduled_date(client, auth_headers):

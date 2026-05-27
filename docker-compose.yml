@@ -21,6 +21,8 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postflow:postflow@db:5432/postflow}
       JWT_SECRET: ${JWT_SECRET:-local-development-change-me}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
+      TIMEWEB_AI_TOKEN: ${TIMEWEB_AI_TOKEN:-}
+      TIMEWEB_AI_AGENT_ID: ${TIMEWEB_AI_AGENT_ID:-}
     ports:
       - "8000:8000"
     depends_on:

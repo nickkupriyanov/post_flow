@@ -99,8 +99,20 @@ class PostRead(PostBase, ORMModel):
     project_id: int
 
 
+class PostGenerateRequest(BaseModel):
+    idea_id: int
+    platform: Platform
+
+
+class GeneratedPostDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=240)
+    body: str = Field(min_length=1)
+    cta: str = ""
+
+
 class DashboardRead(BaseModel):
     scheduled_posts: list[PostRead]
     draft_posts: list[PostRead]
     ideas_without_posts: list[IdeaRead]
-

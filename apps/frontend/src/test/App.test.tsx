@@ -193,6 +193,104 @@ test("post editor requires a date before scheduling and saves a platform post", 
   ));
 });
 
+test("new post editor generates an AI draft without saving it", async () => {
+  localStorage.setItem("postflow_token", "valid-token");
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const path = String(input);
+    if (path.endsWith("/auth/me")) return jsonResponse({ id: 1, email: "me@example.com" });
+    if (path.endsWith("/projects/1")) return jsonResponse(project);
+    if (path.endsWith("/projects/1/ideas")) return jsonResponse([{ id: 2, title: "Evening ritual", notes: "" }]);
+    if (path.endsWith("/projects/1/posts/generate") && init?.method === "POST") {
+      return jsonResponse({ title: "Generated title", body: "Generated body", cta: "Save this" });
+    }
+    return jsonResponse([]);
+  });
+  renderRoute("/projects/1/posts/new?ideaId=2");
+
+  const generate = await screen.findByRole("button", { name: /создать с ai/i });
+  await userEvent.click(generate);
+
+  expect(await screen.findByDisplayValue("Generated title")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("Generated body")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("Save this")).toBeInTheDocument();
+  expect(screen.getByLabelText(/статус/i)).toHaveValue("draft");
+  expect(screen.getByLabelText(/дата публикации/i)).toHaveValue("");
+  const generationCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/projects/1/posts/generate"));
+  expect(generationCall?.[1]).toEqual(expect.objectContaining({
+    method: "POST",
+    body: JSON.stringify({ idea_id: 2, platform: "telegram" })
+  }));
+  expect(fetchMock).not.toHaveBeenCalledWith(
+    expect.stringMatching(/\/projects\/1\/posts$/),
+    expect.objectContaining({ method: "POST" })
+  );
+});
+
+test("AI draft generation confirms replacement and is unavailable when editing a post", async () => {
+  localStorage.setItem("postflow_token", "valid-token");
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const path = String(input);
+    if (path.endsWith("/auth/me")) return jsonResponse({ id: 1, email: "me@example.com" });
+    if (path.endsWith("/projects/1")) return jsonResponse(project);
+    if (path.endsWith("/projects/1/ideas")) return jsonResponse([{ id: 2, title: "Evening ritual", notes: "" }]);
+    if (path.endsWith("/projects/1/posts/generate") && init?.method === "POST") {
+      return jsonResponse({ title: "Replacement", body: "Replaced body", cta: "" });
+    }
+    return jsonResponse([]);
+  });
+  renderRoute("/projects/1/posts/new?ideaId=2");
+
+  await userEvent.type(await screen.findByLabelText(/заголовок поста/i), "Written title");
+  await userEvent.click(screen.getByRole("button", { name: /создать с ai/i }));
+  const dialog = screen.getByRole("alertdialog");
+  expect(within(dialog).getByText(/заменит текущие/i)).toBeInTheDocument();
+  expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/projects/1/posts/generate"))).toBe(false);
+  await userEvent.click(within(dialog).getByRole("button", { name: /^заменить$/i }));
+  expect(await screen.findByDisplayValue("Replacement")).toBeInTheDocument();
+});
+
+test("AI generation is disabled without an idea and displays pending and error states", async () => {
+  localStorage.setItem("postflow_token", "valid-token");
+  let finishGeneration: ((response: Response) => void) | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const path = String(input);
+    if (path.endsWith("/auth/me")) return jsonResponse({ id: 1, email: "me@example.com" });
+    if (path.endsWith("/projects/1")) return jsonResponse(project);
+    if (path.endsWith("/projects/1/ideas")) return jsonResponse([{ id: 2, title: "Evening ritual", notes: "" }]);
+    if (path.endsWith("/projects/1/posts/generate") && init?.method === "POST") {
+      return new Promise((resolve) => { finishGeneration = resolve; });
+    }
+    return jsonResponse([]);
+  });
+  renderRoute("/projects/1/posts/new");
+
+  const generate = await screen.findByRole("button", { name: /создать с ai/i });
+  expect(generate).toBeDisabled();
+  await screen.findByRole("option", { name: "Evening ritual" });
+  await userEvent.selectOptions(screen.getByLabelText(/идея/i), "2");
+  expect(generate).toBeEnabled();
+  await userEvent.click(generate);
+  expect(screen.getByRole("button", { name: /создаём черновик/i })).toBeDisabled();
+  finishGeneration?.(new Response(JSON.stringify({ detail: "Provider failed" }), { status: 502, headers: { "Content-Type": "application/json" } }));
+  expect(await screen.findByText(/не удалось создать ai-черновик/i)).toBeInTheDocument();
+});
+
+test("existing post editor does not offer AI generation", async () => {
+  localStorage.setItem("postflow_token", "valid-token");
+  vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    const path = String(input);
+    if (path.endsWith("/auth/me")) return jsonResponse({ id: 1, email: "me@example.com" });
+    if (path.endsWith("/projects/1")) return jsonResponse(project);
+    if (path.endsWith("/projects/1/ideas")) return jsonResponse([{ id: 2, title: "Evening ritual", notes: "" }]);
+    if (path.endsWith("/projects/1/posts/8")) return jsonResponse({ id: 8, idea_id: 2, platform: "telegram", title: "Old post", body: "Text", cta: "", status: "draft", scheduled_at: null });
+    return jsonResponse([]);
+  });
+  renderRoute("/projects/1/posts/8");
+
+  expect(await screen.findByDisplayValue("Old post")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /создать с ai/i })).not.toBeInTheDocument();
+});
+
 test("ideas can be created and then edited from the side form", async () => {
   localStorage.setItem("postflow_token", "valid-token");
   let ideas: Array<{ id: number; title: string; notes: string; pillar_id: null }> = [];

@@ -9,7 +9,7 @@ import { api } from "../api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Field } from "../components/ProjectForm";
 import { EmptyState, ErrorState, LoadingState } from "../components/States";
-import { Idea, Platform, Post, PostStatus } from "../types";
+import { GeneratedPostDraft, Idea, Platform, Post, PostStatus } from "../types";
 
 export function PostsPage() {
   const { projectId } = useParams();
@@ -83,7 +83,8 @@ function PostEditorForm({
   suggestedIdea: string | null; navigateBack: () => void; queryClient: ReturnType<typeof useQueryClient>;
 }) {
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const { register, handleSubmit, formState: { errors } } = useForm<PostValues>({
+  const [replaceOpen, setReplaceOpen] = useState(false);
+  const { register, handleSubmit, getValues, setValue, watch, formState: { errors } } = useForm<PostValues>({
     resolver: zodResolver(postSchema),
     values: existing ? {
       idea_id: existing.idea_id,
@@ -104,6 +105,8 @@ function PostEditorForm({
       scheduled_at: ""
     }
   });
+  const ideaId = watch("idea_id");
+  const platform = watch("platform");
   const mutation = useMutation({
     mutationFn: (values: PostValues) => api(`/projects/${projectId}/posts${postId ? `/${postId}` : ""}`, {
       method: postId ? "PUT" : "POST",
@@ -123,6 +126,26 @@ function PostEditorForm({
       navigateBack();
     }
   });
+  const generate = useMutation({
+    mutationFn: () => api<GeneratedPostDraft>(`/projects/${projectId}/posts/generate`, {
+      method: "POST",
+      body: JSON.stringify({ idea_id: Number(ideaId), platform })
+    }),
+    onSuccess: (draft) => {
+      setValue("title", draft.title, { shouldValidate: true, shouldDirty: true });
+      setValue("body", draft.body, { shouldValidate: true, shouldDirty: true });
+      setValue("cta", draft.cta, { shouldValidate: true, shouldDirty: true });
+    }
+  });
+  const requestGeneration = () => {
+    generate.reset();
+    const values = getValues();
+    if (values.title.trim() || values.body.trim() || values.cta.trim()) {
+      setReplaceOpen(true);
+      return;
+    }
+    generate.mutate();
+  };
   return (
     <section className="editor-page">
       <div><p className="eyebrow">Редактор</p><h1 className="page-title">{postId ? "Редактировать пост" : "Новый пост"}</h1></div>
@@ -144,6 +167,14 @@ function PostEditorForm({
         <Field label="Заголовок поста" error={errors.title?.message}><input className="title-input" {...register("title")} /></Field>
         <Field label="Текст" error={errors.body?.message}><textarea className="body-input" rows={10} {...register("body")} /></Field>
         <Field label="CTA" error={errors.cta?.message}><input {...register("cta")} /></Field>
+        {!postId ? (
+          <>
+            {generate.isError && <p className="form-error">Не удалось создать AI-черновик. Попробуйте снова.</p>}
+            <button className="secondary-button" type="button" disabled={!Number(ideaId) || !platform || generate.isPending} onClick={requestGeneration}>
+              {generate.isPending ? "Создаём черновик..." : "Создать с AI"}
+            </button>
+          </>
+        ) : null}
         {mutation.isError && <p className="form-error">Пост не удалось сохранить.</p>}
         <div className="editor-actions">
           <button className="primary-button" type="submit" disabled={mutation.isPending}>Сохранить пост</button>
@@ -159,6 +190,16 @@ function PostEditorForm({
         error={remove.isError ? "Не удалось удалить пост." : undefined}
         onCancel={() => { if (!remove.isPending) setDeleteOpen(false); }}
         onConfirm={() => remove.mutate()}
+      />
+      <ConfirmDialog
+        open={replaceOpen}
+        title="Заменить введённый текст?"
+        description="AI-черновик заменит текущие заголовок, текст и CTA."
+        confirmLabel="Заменить"
+        pending={generate.isPending}
+        error={generate.isError ? "Не удалось создать AI-черновик." : undefined}
+        onCancel={() => { if (!generate.isPending) setReplaceOpen(false); }}
+        onConfirm={() => generate.mutate(undefined, { onSuccess: () => setReplaceOpen(false) })}
       />
     </section>
   );

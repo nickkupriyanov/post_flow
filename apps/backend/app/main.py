@@ -1,17 +1,22 @@
+import httpx
+from pydantic import ValidationError
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .config import settings
 from .database import get_db
 from .models import ContentPillar, Idea, Post, Project, User
 from .schemas import (
     DashboardRead,
+    GeneratedPostDraft,
     IdeaCreate,
     IdeaRead,
     PillarCreate,
     PillarRead,
     PostCreate,
+    PostGenerateRequest,
     PostRead,
     ProjectCreate,
     ProjectRead,
@@ -211,6 +216,61 @@ def list_posts(project_id: int, user: User = Depends(get_current_user), db: Sess
 def validate_idea(project_id: int, idea_id: int, db: Session):
     if not db.scalar(select(Idea).where(Idea.id == idea_id, Idea.project_id == project_id)):
         raise HTTPException(status_code=422, detail="Idea must belong to this project")
+
+
+def generation_prompt(project: Project, idea: Idea, platform: str) -> str:
+    pillar = idea.pillar
+    pillar_context = f"{pillar.name}: {pillar.description}" if pillar else "Не указана"
+    return f"""Создай один черновик публикации для контент-планировщика.
+Верни только JSON-объект ровно с ключами "title", "body", "cta", без markdown и пояснений.
+Пиши на языке идеи и контекста проекта.
+
+Проект: {project.name}
+Ниша: {project.niche}
+Описание бизнеса: {project.business_description}
+Целевая аудитория: {project.target_audience}
+Цель контента: {project.content_goal}
+Tone of voice: {project.tone_of_voice}
+Запрещенные темы: {project.forbidden_topics or "Нет"}
+Рубрика: {pillar_context}
+Идея: {idea.title}
+Заметки к идее: {idea.notes or "Нет"}
+Площадка: {platform}
+"""
+
+
+@app.post("/projects/{project_id}/posts/generate", response_model=GeneratedPostDraft)
+def generate_post_draft(
+    payload: PostGenerateRequest,
+    project_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    project = project_or_404(project_id, user, db)
+    idea = db.scalar(select(Idea).where(Idea.id == payload.idea_id, Idea.project_id == project_id))
+    if not idea:
+        raise HTTPException(status_code=422, detail="Idea must belong to this project")
+    if not settings.timeweb_ai_token or not settings.timeweb_ai_agent_id:
+        raise HTTPException(status_code=503, detail="AI generation is not configured")
+
+    try:
+        response = httpx.post(
+            f"https://agent.timeweb.cloud/api/v1/cloud-ai/agents/{settings.timeweb_ai_agent_id}/v1/chat/completions",
+            headers={"Authorization": f"Bearer {settings.timeweb_ai_token}"},
+            json={
+                "messages": [{"role": "user", "content": generation_prompt(project, idea, payload.platform)}],
+                "stream": False,
+            },
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        result = response.json()
+        choice = result["choices"][0]
+        if choice.get("finish_reason") != "stop":
+            raise ValueError("AI generation did not complete")
+        return GeneratedPostDraft.model_validate_json(choice["message"]["content"])
+    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError, ValidationError):
+        raise HTTPException(status_code=502, detail="AI draft could not be generated")
 
 
 @app.post("/projects/{project_id}/posts", response_model=PostRead, status_code=status.HTTP_201_CREATED)
