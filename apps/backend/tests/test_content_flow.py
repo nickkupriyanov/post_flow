@@ -134,6 +134,32 @@ def test_dashboard_collects_scheduled_drafts_and_ideas_without_posts(client, aut
     assert [idea["title"] for idea in dashboard["ideas_without_posts"]] == ["Still an idea"]
 
 
+def test_dashboard_excludes_published_posts_from_upcoming_schedule(client, auth_headers):
+    project = create_project(client, auth_headers)
+    idea = client.post(
+        f"/projects/{project['id']}/ideas",
+        json={"title": "Published recap", "notes": ""},
+        headers=auth_headers,
+    ).json()
+    client.post(
+        f"/projects/{project['id']}/posts",
+        json={
+            "idea_id": idea["id"],
+            "platform": "instagram",
+            "title": "Already live",
+            "body": "Published history",
+            "cta": "",
+            "status": "published",
+            "scheduled_at": "2026-05-20T09:00:00Z",
+        },
+        headers=auth_headers,
+    )
+
+    dashboard = client.get(f"/projects/{project['id']}/dashboard", headers=auth_headers).json()
+
+    assert dashboard["scheduled_posts"] == []
+
+
 def test_nested_content_is_inaccessible_to_another_user(client, auth_headers):
     project = create_project(client, auth_headers)
     stranger_headers = register_and_login(client, "stranger@example.com")

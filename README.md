@@ -10,9 +10,10 @@ PostFlow is a calm editorial workspace for planning content manually before addi
 - Telegram and Instagram posts created from an idea.
 - `draft`, `scheduled`, and `published` workflow with required scheduling dates.
 - Project dashboard with upcoming posts, drafts, and unused ideas.
+- Monthly editorial calendar with planned posts, publication history, and undated drafts.
 - Editorial Studio interface with designed loading, error, and empty states.
 
-AI generation, calendar views, exports, autosave, publishing integrations, and history are intentionally deferred.
+AI generation, exports, autosave, publishing integrations, and extended history are intentionally deferred.
 
 ## Structure
 

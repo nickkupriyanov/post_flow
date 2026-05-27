@@ -258,7 +258,7 @@ def get_dashboard(project_id: int, user: User = Depends(get_current_user), db: S
     ideas = db.scalars(select(Idea).where(Idea.project_id == project_id)).all()
     post_idea_ids = {post.idea_id for post in posts}
     return DashboardRead(
-        scheduled_posts=[post for post in posts if post.status in ("scheduled", "published")],
+        scheduled_posts=[post for post in posts if post.status == "scheduled"],
         draft_posts=[post for post in posts if post.status == "draft"],
         ideas_without_posts=[idea for idea in ideas if idea.id not in post_idea_ids],
     )

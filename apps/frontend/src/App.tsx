@@ -6,6 +6,7 @@ import { LoadingState } from "./components/States";
 import { WorkspaceLayout } from "./components/WorkspaceLayout";
 import { User } from "./types";
 import { AuthPage } from "./pages/AuthPages";
+import { CalendarPage } from "./pages/CalendarPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { IdeasPage } from "./pages/IdeasPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
@@ -41,6 +42,7 @@ export function AppRoutes() {
       <Route path="/projects/new" element={<Protected><OnboardingPage /></Protected>} />
       <Route path="/projects/:projectId" element={<Protected><WorkspaceLayout /></Protected>}>
         <Route index element={<DashboardPage />} />
+        <Route path="calendar" element={<CalendarPage />} />
         <Route path="ideas" element={<IdeasPage />} />
         <Route path="posts" element={<PostsPage />} />
         <Route path="posts/new" element={<PostEditorPage />} />

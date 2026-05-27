@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { vi } from "vitest";
@@ -60,7 +60,7 @@ test("onboarding creates the full project and opens its dashboard", async () => 
   await userEvent.click(screen.getByRole("button", { name: /создать пространство/i }));
 
   expect(await screen.findByText(/ближайшие публикации/i)).toBeInTheDocument();
-  expect(screen.getByText(/план собран/i)).toBeInTheDocument();
+  expect(screen.getByText(/контент в работе/i)).toBeInTheDocument();
 });
 
 test("dashboard renders scheduled posts, drafts and unused ideas", async () => {
@@ -83,6 +83,73 @@ test("dashboard renders scheduled posts, drafts and unused ideas", async () => {
   expect(await screen.findByText("Quiet evening")).toBeInTheDocument();
   expect(screen.getByText("Carousel")).toBeInTheDocument();
   expect(screen.getByText("Behind the scenes")).toBeInTheDocument();
+  expect(screen.getByText(/запланировано 1 публикация/i)).toBeInTheDocument();
+  expect(screen.getByText(/1 черновик готовится, 1 идея ждет воплощения/i)).toBeInTheDocument();
+  const createIdeas = screen.getAllByRole("link", { name: /создать идею/i });
+  expect(createIdeas.length).toBeGreaterThan(0);
+  createIdeas.forEach((link) => expect(link).toHaveAttribute("href", "/projects/1/ideas"));
+  expect(screen.getByText("Quiet evening").closest(".upcoming-panel")).not.toBeNull();
+  expect(screen.getByText(/контент в работе/i).closest(".featured-card")).not.toBeNull();
+});
+
+test("dashboard sorts scheduled publications and does not list published history as upcoming", async () => {
+  localStorage.setItem("postflow_token", "valid-token");
+  vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    const path = String(input);
+    if (path.endsWith("/auth/me")) return jsonResponse({ id: 1, email: "me@example.com" });
+    if (path.endsWith("/projects/1")) return jsonResponse(project);
+    if (path.endsWith("/projects/1/dashboard")) {
+      return jsonResponse({
+        scheduled_posts: [
+          { id: 1, title: "June post", platform: "telegram", status: "scheduled", scheduled_at: "2026-06-05T10:00:00Z" },
+          { id: 2, title: "May post", platform: "instagram", status: "scheduled", scheduled_at: "2026-05-20T10:00:00Z" },
+          { id: 3, title: "July post", platform: "telegram", status: "published", scheduled_at: "2026-07-01T10:00:00Z" }
+        ],
+        draft_posts: [],
+        ideas_without_posts: []
+      });
+    }
+    return jsonResponse([]);
+  });
+  renderRoute("/projects/1");
+
+  await screen.findByText("May post");
+  expect(screen.getByText(/запланировано 2 публикации/i)).toBeInTheDocument();
+  const cards = document.querySelectorAll(".publication-card");
+  const titles = Array.from(cards).map((card) => card.querySelector("h3")?.textContent);
+  expect(titles).toEqual(["May post", "June post"]);
+  expect(screen.queryByText("July post")).not.toBeInTheDocument();
+});
+
+test("calendar renders monthly plan, publication history and undated drafts", async () => {
+  vi.setSystemTime(new Date(2026, 4, 27, 12));
+  localStorage.setItem("postflow_token", "valid-token");
+  vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    const path = String(input);
+    if (path.endsWith("/auth/me")) return jsonResponse({ id: 1, email: "me@example.com" });
+    if (path.endsWith("/projects/1")) return jsonResponse(project);
+    if (path.endsWith("/projects/1/posts")) {
+      return jsonResponse([
+        { id: 10, title: "Morning practice", platform: "telegram", status: "scheduled", scheduled_at: "2026-05-08T08:00:00Z" },
+        { id: 11, title: "Published recap", platform: "instagram", status: "published", scheduled_at: "2026-05-09T08:00:00Z" },
+        { id: 12, title: "Undated draft", platform: "telegram", status: "draft", scheduled_at: null },
+        { id: 13, title: "June launch", platform: "telegram", status: "scheduled", scheduled_at: "2026-06-18T08:00:00Z" }
+      ]);
+    }
+    return jsonResponse([]);
+  });
+  renderRoute("/projects/1/calendar");
+
+  expect(await screen.findByRole("heading", { name: /календарь/i })).toBeInTheDocument();
+  expect(await screen.findByRole("region", { name: /май 2026/i })).toBeInTheDocument();
+  expect(screen.getByText("Morning practice").closest("a")).toHaveAttribute("href", "/projects/1/posts/10");
+  expect(screen.getByText("Published recap").closest(".published")).not.toBeNull();
+  expect(screen.getByText("Undated draft").closest(".calendar-drafts")).not.toBeNull();
+  expect(screen.getAllByRole("link", { name: /календарь/i })).toHaveLength(2);
+
+  fireEvent.click(screen.getByRole("button", { name: /следующий месяц/i }));
+  expect(screen.getByRole("region", { name: /июнь 2026/i })).toBeInTheDocument();
+  expect(screen.getByText("June launch")).toBeInTheDocument();
 });
 
 test("returning user can choose an existing project instead of onboarding again", async () => {
