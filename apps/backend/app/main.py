@@ -10,8 +10,11 @@ from .database import get_db
 from .models import ContentPillar, Idea, Post, Project, User
 from .schemas import (
     DashboardRead,
+    GeneratedIdeas,
     GeneratedPostDraft,
+    IdeaBulkCreate,
     IdeaCreate,
+    IdeaGenerateRequest,
     IdeaRead,
     PillarCreate,
     PillarRead,
@@ -167,6 +170,94 @@ def list_ideas(project_id: int, user: User = Depends(get_current_user), db: Sess
 def validate_pillar(project_id: int, pillar_id: int | None, db: Session):
     if pillar_id and not db.scalar(select(ContentPillar).where(ContentPillar.id == pillar_id, ContentPillar.project_id == project_id)):
         raise HTTPException(status_code=422, detail="Pillar must belong to this project")
+
+
+def idea_generation_prompt(project: Project, pillars: list[ContentPillar], selected_pillar: ContentPillar | None) -> str:
+    pillar_context = "\n".join(f"- {pillar.name}: {pillar.description}" for pillar in pillars) or "- Рубрики не указаны"
+    selection = (
+        f"Выбранная рубрика: {selected_pillar.name}: {selected_pillar.description}"
+        if selected_pillar
+        else "Режим: идеи для проекта целиком"
+    )
+    return f"""Предложи ровно 5 идей для backlog контент-планировщика.
+Верни только JSON-объект ровно с ключом "ideas". Каждый элемент массива должен иметь ровно ключи "title" и "notes", без markdown и пояснений.
+Пиши на языке контекста проекта. Не используй запрещенные темы.
+
+Проект: {project.name}
+Ниша: {project.niche}
+Описание бизнеса: {project.business_description}
+Целевая аудитория: {project.target_audience}
+Цель контента: {project.content_goal}
+Tone of voice: {project.tone_of_voice}
+Запрещенные темы: {project.forbidden_topics or "Нет"}
+Доступные рубрики:
+{pillar_context}
+{selection}
+"""
+
+
+@app.post("/projects/{project_id}/ideas/generate", response_model=GeneratedIdeas)
+def generate_ideas(
+    payload: IdeaGenerateRequest,
+    project_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    project = project_or_404(project_id, user, db)
+    selected_pillar = None
+    if payload.pillar_id is not None:
+        selected_pillar = db.scalar(
+            select(ContentPillar).where(
+                ContentPillar.id == payload.pillar_id,
+                ContentPillar.project_id == project_id,
+            )
+        )
+        if not selected_pillar:
+            raise HTTPException(status_code=422, detail="Pillar must belong to this project")
+    if not settings.timeweb_ai_token or not settings.timeweb_ai_agent_id:
+        raise HTTPException(status_code=503, detail="AI generation is not configured")
+    pillars = (
+        [selected_pillar]
+        if selected_pillar
+        else db.scalars(select(ContentPillar).where(ContentPillar.project_id == project_id)).all()
+    )
+
+    try:
+        response = httpx.post(
+            f"https://agent.timeweb.cloud/api/v1/cloud-ai/agents/{settings.timeweb_ai_agent_id}/v1/chat/completions",
+            headers={"Authorization": f"Bearer {settings.timeweb_ai_token}"},
+            json={
+                "messages": [{"role": "user", "content": idea_generation_prompt(project, pillars, selected_pillar)}],
+                "stream": False,
+            },
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        result = response.json()
+        choice = result["choices"][0]
+        if choice.get("finish_reason") != "stop":
+            raise ValueError("AI generation did not complete")
+        return GeneratedIdeas.model_validate_json(choice["message"]["content"])
+    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError, ValidationError):
+        raise HTTPException(status_code=502, detail="AI ideas could not be generated")
+
+
+@app.post("/projects/{project_id}/ideas/bulk", response_model=list[IdeaRead], status_code=status.HTTP_201_CREATED)
+def create_ideas_bulk(
+    payload: IdeaBulkCreate,
+    project_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    project_or_404(project_id, user, db)
+    for idea in payload.ideas:
+        validate_pillar(project_id, idea.pillar_id, db)
+    ideas = [Idea(project_id=project_id, **idea.model_dump()) for idea in payload.ideas]
+    db.add_all(ideas)
+    db.commit()
+    for idea in ideas:
+        db.refresh(idea)
+    return ideas
 
 
 @app.post("/projects/{project_id}/ideas", response_model=IdeaRead, status_code=status.HTTP_201_CREATED)

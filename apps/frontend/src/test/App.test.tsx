@@ -329,6 +329,102 @@ test("ideas can be created and then edited from the side form", async () => {
   ));
 });
 
+test("AI ideas are generated for a pillar and only selected suggestions are saved", async () => {
+  localStorage.setItem("postflow_token", "valid-token");
+  const suggestions = Array.from({ length: 5 }, (_, index) => ({
+    title: `Suggestion ${index + 1}`,
+    notes: `Angle ${index + 1}`
+  }));
+  let ideas: Array<{ id: number; title: string; notes: string; pillar_id: number | null }> = [];
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const path = String(input);
+    if (path.endsWith("/auth/me")) return jsonResponse({ id: 1, email: "me@example.com" });
+    if (path.endsWith("/projects/1")) return jsonResponse(project);
+    if (path.endsWith("/projects/1/pillars")) return jsonResponse([{ id: 4, name: "Practice", description: "Routines" }]);
+    if (path.endsWith("/projects/1/ideas/generate") && init?.method === "POST") return jsonResponse({ ideas: suggestions });
+    if (path.endsWith("/projects/1/ideas/bulk") && init?.method === "POST") {
+      ideas = [
+        { id: 21, title: "Suggestion 1", notes: "Angle 1", pillar_id: 4 },
+        { id: 23, title: "Suggestion 3", notes: "Angle 3", pillar_id: 4 },
+        { id: 24, title: "Suggestion 4", notes: "Angle 4", pillar_id: 4 },
+        { id: 25, title: "Suggestion 5", notes: "Angle 5", pillar_id: 4 }
+      ];
+      return jsonResponse(ideas, 201);
+    }
+    if (path.endsWith("/projects/1/ideas")) return jsonResponse(ideas);
+    return jsonResponse([]);
+  });
+  renderRoute("/projects/1/ideas");
+
+  const contextSelector = await screen.findByLabelText(/контекст генерации/i);
+  await waitFor(() => expect(within(contextSelector).getByRole("option", { name: "Practice" })).toBeInTheDocument());
+  await userEvent.selectOptions(contextSelector, "4");
+  await userEvent.click(screen.getByRole("button", { name: /предложить идеи с ai/i }));
+  expect(await screen.findByText("Suggestion 1")).toBeInTheDocument();
+  expect(screen.getAllByRole("checkbox", { name: /выбрать идею/i })).toHaveLength(5);
+  await userEvent.click(screen.getByRole("checkbox", { name: /выбрать идею suggestion 2/i }));
+  await userEvent.click(screen.getByRole("button", { name: /сохранить выбранные/i }));
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+    expect.stringContaining("/projects/1/ideas/generate"),
+    expect.objectContaining({ method: "POST", body: JSON.stringify({ pillar_id: 4 }) })
+  ));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+    expect.stringContaining("/projects/1/ideas/bulk"),
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ ideas: [
+        { title: "Suggestion 1", notes: "Angle 1", pillar_id: 4 },
+        { title: "Suggestion 3", notes: "Angle 3", pillar_id: 4 },
+        { title: "Suggestion 4", notes: "Angle 4", pillar_id: 4 },
+        { title: "Suggestion 5", notes: "Angle 5", pillar_id: 4 }
+      ] })
+    })
+  ));
+  expect(await screen.findByText("Suggestion 3")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /сохранить выбранные/i })).not.toBeInTheDocument();
+});
+
+test("AI idea preview remains available after errors and disables saving with no selection", async () => {
+  localStorage.setItem("postflow_token", "valid-token");
+  const suggestions = Array.from({ length: 5 }, (_, index) => ({
+    title: `Draft idea ${index + 1}`,
+    notes: `Note ${index + 1}`
+  }));
+  let generationAttempts = 0;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const path = String(input);
+    if (path.endsWith("/auth/me")) return jsonResponse({ id: 1, email: "me@example.com" });
+    if (path.endsWith("/projects/1")) return jsonResponse(project);
+    if (path.endsWith("/projects/1/pillars")) return jsonResponse([]);
+    if (path.endsWith("/projects/1/ideas/generate") && init?.method === "POST") {
+      generationAttempts += 1;
+      return generationAttempts === 1 ? jsonResponse({ ideas: suggestions }) : jsonResponse({ detail: "AI generation is not configured" }, 503);
+    }
+    if (path.endsWith("/projects/1/ideas/bulk") && init?.method === "POST") return jsonResponse({ detail: "Save failed" }, 500);
+    if (path.endsWith("/projects/1/ideas")) return jsonResponse([]);
+    return jsonResponse([]);
+  });
+  renderRoute("/projects/1/ideas");
+
+  await userEvent.click(await screen.findByRole("button", { name: /предложить идеи с ai/i }));
+  const checkboxes = await screen.findAllByRole("checkbox", { name: /выбрать идею/i });
+  for (const checkbox of checkboxes) await userEvent.click(checkbox);
+  expect(screen.getByRole("button", { name: /сохранить выбранные/i })).toBeDisabled();
+
+  await userEvent.click(screen.getByRole("checkbox", { name: /выбрать идею draft idea 1/i }));
+  await userEvent.click(screen.getByRole("button", { name: /предложить идеи с ai/i }));
+  expect(await screen.findByText(/ai не настроен/i)).toBeInTheDocument();
+  expect(screen.getByText("Draft idea 1")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: /сохранить выбранные/i }));
+  expect(await screen.findByText(/не удалось сохранить выбранные идеи/i)).toBeInTheDocument();
+  expect(screen.getByText("Draft idea 1")).toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledWith(
+    expect.stringContaining("/projects/1/ideas/generate"),
+    expect.objectContaining({ method: "POST", body: JSON.stringify({ pillar_id: null }) })
+  );
+});
+
 test("idea deletion requires confirmation and displays a failed deletion", async () => {
   localStorage.setItem("postflow_token", "valid-token");
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {

@@ -74,6 +74,27 @@ class IdeaRead(IdeaBase, ORMModel):
     project_id: int
 
 
+class IdeaGenerateRequest(BaseModel):
+    pillar_id: int | None = None
+
+
+class GeneratedIdeaDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=240)
+    notes: str = ""
+
+
+class GeneratedIdeas(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ideas: list[GeneratedIdeaDraft] = Field(min_length=5, max_length=5)
+
+
+class IdeaBulkCreate(BaseModel):
+    ideas: list[IdeaCreate] = Field(min_length=1, max_length=5)
+
+
 class PostBase(BaseModel):
     idea_id: int
     platform: Platform

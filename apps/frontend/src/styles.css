@@ -657,6 +657,31 @@ h1, h2, h3, p { margin: 0; }
 .side-form { align-self: start; }
 .side-form h2 { font-size: 1.25rem; font-weight: 700; letter-spacing: -.02em; margin-bottom: 1.2rem; }
 .form-actions { display: flex; gap: .55rem; }
+.ai-ideas-panel {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  margin-bottom: 1rem;
+  padding: 1.2rem;
+}
+.ai-ideas-header { align-items: start; display: flex; gap: 1rem; justify-content: space-between; margin-bottom: 1rem; }
+.ai-ideas-header h2 { font-size: 1.18rem; letter-spacing: -.02em; }
+.ai-context { max-width: 300px; }
+.ai-suggestions { display: grid; gap: .55rem; margin: .3rem 0 1rem; }
+.ai-suggestion {
+  align-items: start;
+  background: var(--canvas);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  gap: .7rem;
+  padding: .75rem .8rem;
+}
+.ai-suggestion input { accent-color: var(--coral); margin-top: .2rem; }
+.ai-suggestion span { display: grid; gap: .2rem; }
+.ai-suggestion strong { font-size: .87rem; }
+.ai-suggestion small { color: var(--muted); font-size: .76rem; }
 
 /* ── Posts Page ── */
 .page-header { align-items: start; display: flex; justify-content: space-between; }
@@ -838,6 +863,7 @@ h1, h2, h3, p { margin: 0; }
   .featured-decoration { display: none; }
   .featured-actions { flex-direction: column; }
   .back-to-projects { display: none; }
+  .ai-ideas-header { flex-direction: column; }
 }
 
 @media (prefers-reduced-motion: reduce) {

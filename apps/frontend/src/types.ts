@@ -33,6 +33,15 @@ export interface Idea {
   pillar_id?: number | null;
 }
 
+export interface GeneratedIdeaDraft {
+  title: string;
+  notes: string;
+}
+
+export interface GeneratedIdeas {
+  ideas: GeneratedIdeaDraft[];
+}
+
 export interface Post {
   id: number;
   project_id?: number;

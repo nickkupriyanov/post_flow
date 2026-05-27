@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import json
 
 import httpx
 import pytest
@@ -207,6 +208,221 @@ def test_ai_generation_maps_provider_http_error_to_bad_gateway(client, auth_head
         json={"idea_id": idea["id"], "platform": "telegram"},
         headers=auth_headers,
     ).status_code == 502
+
+
+def test_ai_idea_generation_returns_five_suggestions_without_saving_them(client, auth_headers, monkeypatch):
+    project = create_project(client, auth_headers)
+    client.post(
+        f"/projects/{project['id']}/pillars",
+        json={"name": "Practice", "description": "Expert routines"},
+        headers=auth_headers,
+    )
+    client.post(
+        f"/projects/{project['id']}/pillars",
+        json={"name": "Stories", "description": "Client moments"},
+        headers=auth_headers,
+    )
+    monkeypatch.setattr("app.main.settings.timeweb_ai_token", "secret-token")
+    monkeypatch.setattr("app.main.settings.timeweb_ai_agent_id", "content-agent")
+    request = {}
+    suggestions = [
+        {"title": f"Idea {index}", "notes": f"Angle {index}"}
+        for index in range(1, 6)
+    ]
+
+    class AgentResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "choices": [{
+                    "message": {"content": json.dumps({"ideas": suggestions})},
+                    "finish_reason": "stop",
+                }]
+            }
+
+    def fake_post(url, **kwargs):
+        request["url"] = url
+        request.update(kwargs)
+        return AgentResponse()
+
+    monkeypatch.setattr("app.main.httpx.post", fake_post)
+    response = client.post(
+        f"/projects/{project['id']}/ideas/generate",
+        json={"pillar_id": None},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ideas": suggestions}
+    assert client.get(f"/projects/{project['id']}/ideas", headers=auth_headers).json() == []
+    prompt = request["json"]["messages"][0]["content"]
+    assert "Calm bodywork studio" in prompt
+    assert "Practice: Expert routines" in prompt
+    assert "Stories: Client moments" in prompt
+    assert "ровно 5" in prompt
+
+
+def test_ai_idea_generation_uses_selected_owned_pillar(client, auth_headers, monkeypatch):
+    project = create_project(client, auth_headers)
+    selected = client.post(
+        f"/projects/{project['id']}/pillars",
+        json={"name": "Practice", "description": "Expert routines"},
+        headers=auth_headers,
+    ).json()
+    client.post(
+        f"/projects/{project['id']}/pillars",
+        json={"name": "Stories", "description": "Not selected"},
+        headers=auth_headers,
+    )
+    other_project = create_project(client, auth_headers, "Other project")
+    other_pillar = client.post(
+        f"/projects/{other_project['id']}/pillars",
+        json={"name": "Other", "description": ""},
+        headers=auth_headers,
+    ).json()
+    monkeypatch.setattr("app.main.settings.timeweb_ai_token", "secret-token")
+    monkeypatch.setattr("app.main.settings.timeweb_ai_agent_id", "content-agent")
+    requested_prompt = {}
+
+    class AgentResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "choices": [{
+                    "message": {"content": '{"ideas":[{"title":"1","notes":""},{"title":"2","notes":""},{"title":"3","notes":""},{"title":"4","notes":""},{"title":"5","notes":""}]}'},
+                    "finish_reason": "stop",
+                }]
+            }
+
+    def fake_post(*args, **kwargs):
+        requested_prompt["value"] = kwargs["json"]["messages"][0]["content"]
+        return AgentResponse()
+
+    monkeypatch.setattr("app.main.httpx.post", fake_post)
+    assert client.post(
+        f"/projects/{project['id']}/ideas/generate",
+        json={"pillar_id": selected["id"]},
+        headers=auth_headers,
+    ).status_code == 200
+    assert "Practice: Expert routines" in requested_prompt["value"]
+    assert "Stories: Not selected" not in requested_prompt["value"]
+    assert "Выбранная рубрика" in requested_prompt["value"]
+    assert client.post(
+        f"/projects/{project['id']}/ideas/generate",
+        json={"pillar_id": other_pillar["id"]},
+        headers=auth_headers,
+    ).status_code == 422
+
+
+@pytest.mark.parametrize("agent_content", [
+    '{"ideas":[{"title":"Only one","notes":""}]}',
+    '{"ideas":[{"title":"1","notes":"","extra":"bad"},{"title":"2","notes":""},{"title":"3","notes":""},{"title":"4","notes":""},{"title":"5","notes":""}]}',
+])
+def test_ai_idea_generation_rejects_invalid_agent_results(client, auth_headers, monkeypatch, agent_content):
+    project = create_project(client, auth_headers)
+    monkeypatch.setattr("app.main.settings.timeweb_ai_token", "secret-token")
+    monkeypatch.setattr("app.main.settings.timeweb_ai_agent_id", "content-agent")
+
+    class AgentResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "choices": [{
+                    "message": {"content": agent_content},
+                    "finish_reason": "stop",
+                }]
+            }
+
+    monkeypatch.setattr("app.main.httpx.post", lambda *args, **kwargs: AgentResponse())
+    assert client.post(
+        f"/projects/{project['id']}/ideas/generate",
+        json={"pillar_id": None},
+        headers=auth_headers,
+    ).status_code == 502
+
+
+def test_ai_idea_generation_requires_configuration_and_maps_provider_failure(client, auth_headers, monkeypatch):
+    project = create_project(client, auth_headers)
+    assert client.post(
+        f"/projects/{project['id']}/ideas/generate",
+        json={"pillar_id": None},
+        headers=auth_headers,
+    ).status_code == 503
+
+    monkeypatch.setattr("app.main.settings.timeweb_ai_token", "secret-token")
+    monkeypatch.setattr("app.main.settings.timeweb_ai_agent_id", "content-agent")
+
+    def failed_call(*args, **kwargs):
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr("app.main.httpx.post", failed_call)
+    assert client.post(
+        f"/projects/{project['id']}/ideas/generate",
+        json={"pillar_id": None},
+        headers=auth_headers,
+    ).status_code == 502
+
+
+def test_bulk_idea_save_creates_selected_ideas_with_a_pillar(client, auth_headers):
+    project = create_project(client, auth_headers)
+    pillar = client.post(
+        f"/projects/{project['id']}/pillars",
+        json={"name": "Practice", "description": ""},
+        headers=auth_headers,
+    ).json()
+    response = client.post(
+        f"/projects/{project['id']}/ideas/bulk",
+        json={"ideas": [
+            {"title": "Idea one", "notes": "First", "pillar_id": pillar["id"]},
+            {"title": "Idea two", "notes": "Second", "pillar_id": pillar["id"]},
+        ]},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 201
+    assert [idea["title"] for idea in response.json()] == ["Idea one", "Idea two"]
+    assert all(idea["pillar_id"] == pillar["id"] for idea in response.json())
+    assert len(client.get(f"/projects/{project['id']}/ideas", headers=auth_headers).json()) == 2
+
+
+def test_bulk_idea_save_is_atomic_and_nested_ai_routes_are_private(client, auth_headers, monkeypatch):
+    project = create_project(client, auth_headers)
+    other_project = create_project(client, auth_headers, "Other project")
+    foreign_pillar = client.post(
+        f"/projects/{other_project['id']}/pillars",
+        json={"name": "Other", "description": ""},
+        headers=auth_headers,
+    ).json()
+    response = client.post(
+        f"/projects/{project['id']}/ideas/bulk",
+        json={"ideas": [
+            {"title": "Valid first", "notes": "", "pillar_id": None},
+            {"title": "Invalid second", "notes": "", "pillar_id": foreign_pillar["id"]},
+        ]},
+        headers=auth_headers,
+    )
+    assert response.status_code == 422
+    assert client.get(f"/projects/{project['id']}/ideas", headers=auth_headers).json() == []
+
+    stranger_headers = register_and_login(client, "ideas-stranger@example.com")
+    monkeypatch.setattr("app.main.settings.timeweb_ai_token", "secret-token")
+    monkeypatch.setattr("app.main.settings.timeweb_ai_agent_id", "content-agent")
+    assert client.post(
+        f"/projects/{project['id']}/ideas/generate",
+        json={"pillar_id": None},
+        headers=stranger_headers,
+    ).status_code == 404
+    assert client.post(
+        f"/projects/{project['id']}/ideas/bulk",
+        json={"ideas": [{"title": "Not mine", "notes": "", "pillar_id": None}]},
+        headers=stranger_headers,
+    ).status_code == 404
 
 
 def test_scheduled_and_published_posts_require_scheduled_date(client, auth_headers):
